@@ -10,9 +10,24 @@
       margin: 24px;
       line-height: 1.6;
       background: #f7f7f7;
+      color: #222;
     }
 
     h1 {
+      margin-bottom: 16px;
+    }
+
+    h2,
+    h3 {
+      margin-top: 0;
+    }
+
+    .card,
+    .panel {
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 16px;
       margin-bottom: 16px;
     }
 
@@ -23,12 +38,16 @@
       margin-bottom: 16px;
     }
 
-    .tabs button {
+    .tabs button,
+    .secondary,
+    .danger,
+    .row-action {
       padding: 8px 12px;
       border: 1px solid #aaa;
       background: white;
       cursor: pointer;
       border-radius: 6px;
+      font: inherit;
     }
 
     .tabs button.active {
@@ -38,11 +57,6 @@
 
     .panel {
       display: none;
-      background: white;
-      border: 1px solid #ddd;
-      border-radius: 8px;
-      padding: 16px;
-      margin-bottom: 16px;
     }
 
     .panel.active {
@@ -56,7 +70,8 @@
     }
 
     input,
-    textarea {
+    textarea,
+    select {
       width: 100%;
       box-sizing: border-box;
       padding: 8px;
@@ -64,14 +79,20 @@
       border: 1px solid #bbb;
       border-radius: 4px;
       font: inherit;
+      background: white;
     }
 
     textarea {
       min-height: 80px;
     }
 
-    .actions {
+    .actions,
+    .inline-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
       margin-top: 16px;
+      align-items: center;
     }
 
     button.generate {
@@ -81,6 +102,94 @@
       background: #0069d9;
       color: white;
       cursor: pointer;
+      font: inherit;
+    }
+
+    .danger {
+      border-color: #b00020;
+      color: #b00020;
+    }
+
+    .muted {
+      color: #666;
+      font-size: 0.92rem;
+    }
+
+    .status {
+      margin-top: 8px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      background: #eef5ff;
+      color: #17406f;
+    }
+
+    .status.error {
+      background: #ffecec;
+      color: #8a1f1f;
+    }
+
+    .layout-two {
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) minmax(280px, 2fr);
+      gap: 16px;
+    }
+
+    .table-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .table-list button {
+      text-align: left;
+    }
+
+    .preview-wrap,
+    .grid-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      min-width: 720px;
+      background: white;
+    }
+
+    th,
+    td {
+      border: 1px solid #ddd;
+      padding: 8px;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f0f0f0;
+      white-space: nowrap;
+    }
+
+    td input,
+    td textarea,
+    td select {
+      min-width: 120px;
+      margin-top: 0;
+    }
+
+    .reference-box {
+      margin-top: 6px;
+      padding: 8px;
+      border-left: 4px solid #ddd;
+      background: #fafafa;
+      font-size: 0.92rem;
+    }
+
+    .reference-box strong {
+      display: block;
+      margin-bottom: 2px;
+    }
+
+    .required-note {
+      margin-top: 0;
     }
 
     pre {
@@ -91,10 +200,42 @@
       overflow-x: auto;
       white-space: pre-wrap;
     }
+
+    @media (max-width: 760px) {
+      body {
+        margin: 12px;
+      }
+
+      .layout-two {
+        grid-template-columns: 1fr;
+      }
+    }
   </style>
 </head>
 <body>
   <h1>イベントDB管理</h1>
+
+  <section class="card" aria-labelledby="sqlite-heading">
+    <h2 id="sqlite-heading">SQLiteファイル読み込み</h2>
+    <p class="required-note muted">
+      既存のSQLiteファイル（.sqlite / .db）を読み込むと、テーブル内容を確認でき、入力欄で会場・イベント・楽曲などの既存情報を参照できます。
+    </p>
+    <label>
+      SQLiteファイル
+      <input type="file" id="sqlite-file" accept=".sqlite,.sqlite3,.db,application/vnd.sqlite3,application/octet-stream">
+    </label>
+    <div id="db-status" class="status">未読み込みです。</div>
+    <div id="db-browser" class="layout-two" hidden>
+      <div>
+        <h3>テーブル</h3>
+        <div id="table-list" class="table-list"></div>
+      </div>
+      <div>
+        <h3 id="preview-title">内容</h3>
+        <div id="table-preview" class="preview-wrap"></div>
+      </div>
+    </div>
+  </section>
 
   <div class="tabs" id="tabs"></div>
   <div id="panels"></div>
@@ -102,6 +243,7 @@
   <h2>生成SQL</h2>
   <pre id="output">ここにINSERT文が表示されます。</pre>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
   <script>
     const tables = {
       events: {
@@ -175,9 +317,60 @@
       }
     };
 
+    const referenceConfig = {
+      venue_id: {
+        table: "venues",
+        id: "venue_id",
+        labelColumns: ["venue_name", "venue_short_name", "address"],
+        title: "会場"
+      },
+      event_id: {
+        table: "events",
+        id: "event_id",
+        labelColumns: ["event_name", "event_short_name", "starts_at"],
+        title: "イベント"
+      },
+      song_id: {
+        table: "songs",
+        id: "song_id",
+        labelColumns: ["song_name", "musical_key"],
+        title: "楽曲"
+      },
+      genre_id: {
+        table: "genres",
+        id: "genre_id",
+        labelColumns: ["genre_name", "genre_color"],
+        title: "ジャンル"
+      }
+    };
+
     const tabs = document.getElementById("tabs");
     const panels = document.getElementById("panels");
     const output = document.getElementById("output");
+    const sqliteFile = document.getElementById("sqlite-file");
+    const dbStatus = document.getElementById("db-status");
+    const dbBrowser = document.getElementById("db-browser");
+    const tableList = document.getElementById("table-list");
+    const previewTitle = document.getElementById("preview-title");
+    const tablePreview = document.getElementById("table-preview");
+
+    let SQL;
+    let loadedDb;
+    let dbRows = {};
+    let dbColumns = {};
+    const datalistIds = new Map();
+    const referenceBoxes = [];
+    const setlistRows = [];
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>'"]/g, character => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "'": "&#39;",
+        "\"": "&quot;"
+      }[character]));
+    }
 
     function sqlValue(value, type) {
       if (value === "") return "NULL";
@@ -187,6 +380,30 @@
       }
 
       return "'" + String(value).replaceAll("'", "''") + "'";
+    }
+
+    function describeRow(row, columns) {
+      return columns
+        .filter(column => row[column] !== undefined && row[column] !== null && row[column] !== "")
+        .map(column => `${column}: ${row[column]}`)
+        .join(" / ");
+    }
+
+    function referenceLabel(row, config) {
+      const labels = config.labelColumns
+        .filter(column => row[column] !== undefined && row[column] !== null && row[column] !== "")
+        .map(column => row[column]);
+      return labels.length > 0 ? labels.join(" / ") : describeRow(row, Object.keys(row));
+    }
+
+    function getRows(tableName) {
+      return dbRows[tableName] ?? [];
+    }
+
+    function getReferenceRow(columnName, value) {
+      const config = referenceConfig[columnName];
+      if (!config || value === "") return null;
+      return getRows(config.table).find(row => String(row[config.id]) === String(value)) ?? null;
     }
 
     function generateInsert(tableName) {
@@ -205,6 +422,42 @@
         `VALUES (${values.join(", ")});`;
     }
 
+    function generateSetlistInsert() {
+      const eventSelect = document.getElementById("setlist-event-select");
+      const eventId = eventSelect.value;
+
+      if (!eventId) {
+        output.textContent = "-- 先にイベントを選択してください。";
+        return;
+      }
+
+      const columns = tables.setlists.columns.map(([columnName]) => columnName);
+      const statements = setlistRows.map((row, index) => {
+        const values = {
+          setlist_id: row.querySelector('[data-column="setlist_id"]').value,
+          event_id: eventId,
+          performance_id: index + 1,
+          performance_type: row.querySelector('[data-column="performance_type"]').value,
+          performance_type_short_name: row.querySelector('[data-column="performance_type_short_name"]').value,
+          song_id: row.querySelector('[data-column="song_id"]').value,
+          notes: row.querySelector('[data-column="notes"]').value
+        };
+        return `(${columns.map(columnName => {
+          const [, , type] = tables.setlists.columns.find(([name]) => name === columnName);
+          return sqlValue(String(values[columnName] ?? ""), type);
+        }).join(", ")})`;
+      });
+
+      if (statements.length === 0) {
+        output.textContent = "-- 演目行を追加してください。";
+        return;
+      }
+
+      output.textContent =
+        `INSERT INTO setlists (${columns.join(", ")})\nVALUES\n` +
+        `${statements.join(",\n")};`;
+    }
+
     function activate(tableName) {
       document.querySelectorAll(".tabs button").forEach(button => {
         button.classList.toggle("active", button.dataset.table === tableName);
@@ -215,13 +468,251 @@
       });
     }
 
-    Object.entries(tables).forEach(([tableName, table], index) => {
-      const tab = document.createElement("button");
-      tab.textContent = table.label;
-      tab.dataset.table = tableName;
-      tab.addEventListener("click", () => activate(tableName));
-      tabs.appendChild(tab);
+    function buildDatalists() {
+      document.querySelectorAll("datalist[data-reference-list]").forEach(datalist => datalist.remove());
+      datalistIds.clear();
 
+      Object.entries(referenceConfig).forEach(([columnName, config]) => {
+        const datalist = document.createElement("datalist");
+        const datalistId = `reference-${columnName}`;
+        datalist.id = datalistId;
+        datalist.dataset.referenceList = columnName;
+        getRows(config.table).forEach(row => {
+          const option = document.createElement("option");
+          option.value = row[config.id];
+          option.label = referenceLabel(row, config);
+          datalist.appendChild(option);
+        });
+        document.body.appendChild(datalist);
+        datalistIds.set(columnName, datalistId);
+      });
+
+      document.querySelectorAll("input[data-reference-column]").forEach(input => {
+        input.setAttribute("list", datalistIds.get(input.dataset.referenceColumn) ?? "");
+      });
+    }
+
+    function updateReferenceBox(input, box) {
+      const config = referenceConfig[input.dataset.referenceColumn];
+      const row = getReferenceRow(input.dataset.referenceColumn, input.value);
+      if (!config) return;
+
+      if (!loadedDb) {
+        box.textContent = "SQLiteファイルを読み込むと既存情報を参照できます。";
+        return;
+      }
+
+      if (!input.value) {
+        box.textContent = `${config.title}IDを入力すると候補の詳細がここに表示されます。`;
+        return;
+      }
+
+      if (!row) {
+        box.textContent = `読み込み済みDB内に該当する${config.title}が見つかりません。`;
+        return;
+      }
+
+      box.innerHTML = `<strong>${escapeHtml(config.title)}参照</strong>${escapeHtml(referenceLabel(row, config))}`;
+    }
+
+    function updateAllReferenceBoxes() {
+      referenceBoxes.forEach(({ input, box }) => updateReferenceBox(input, box));
+      updateEventSelectOptions();
+      updateSongSelectOptions();
+    }
+
+    function loadTableRows(db) {
+      dbRows = {};
+      dbColumns = {};
+
+      const tableNames = db.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name");
+      const names = tableNames[0]?.values.map(([name]) => name) ?? [];
+
+      names.forEach(name => {
+        const result = db.exec(`SELECT * FROM "${String(name).replaceAll('"', '""')}"`)[0];
+        dbColumns[name] = result?.columns ?? [];
+        dbRows[name] = result?.values.map(values => Object.fromEntries(result.columns.map((column, index) => [column, values[index]]))) ?? [];
+      });
+
+      return names;
+    }
+
+    function renderTablePreview(tableName) {
+      const columns = dbColumns[tableName] ?? [];
+      const rows = (dbRows[tableName] ?? []).slice(0, 200);
+      previewTitle.textContent = `${tableName}（最大200件表示）`;
+
+      if (columns.length === 0) {
+        tablePreview.innerHTML = "<p class=\"muted\">表示できる列がありません。</p>";
+        return;
+      }
+
+      const header = columns.map(column => `<th>${escapeHtml(column)}</th>`).join("");
+      const body = rows.map(row => `<tr>${columns.map(column => `<td>${escapeHtml(row[column])}</td>`).join("")}</tr>`).join("");
+      tablePreview.innerHTML = `<table><thead><tr>${header}</tr></thead><tbody>${body || `<tr><td colspan="${columns.length}">データがありません。</td></tr>`}</tbody></table>`;
+    }
+
+    function renderTableList(tableNames) {
+      tableList.innerHTML = "";
+      tableNames.forEach((tableName, index) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "secondary";
+        button.textContent = `${tableName}（${getRows(tableName).length}件）`;
+        button.addEventListener("click", () => renderTablePreview(tableName));
+        tableList.appendChild(button);
+        if (index === 0) renderTablePreview(tableName);
+      });
+    }
+
+    async function loadSqliteFile(file) {
+      try {
+        dbStatus.classList.remove("error");
+        dbStatus.textContent = "SQLiteエンジンとファイルを読み込み中です...";
+        if (!SQL) {
+          SQL = await initSqlJs({
+            locateFile: fileName => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${fileName}`
+          });
+        }
+        if (loadedDb) loadedDb.close();
+        loadedDb = new SQL.Database(new Uint8Array(await file.arrayBuffer()));
+        const tableNames = loadTableRows(loadedDb);
+        renderTableList(tableNames);
+        buildDatalists();
+        updateAllReferenceBoxes();
+        dbBrowser.hidden = false;
+        dbStatus.textContent = `${file.name} を読み込みました。${tableNames.length}個のテーブルを参照できます。`;
+      } catch (error) {
+        loadedDb = null;
+        dbRows = {};
+        dbColumns = {};
+        dbBrowser.hidden = true;
+        dbStatus.classList.add("error");
+        dbStatus.textContent = `読み込みに失敗しました: ${error.message}`;
+        updateAllReferenceBoxes();
+      }
+    }
+
+    function updateEventSelectOptions() {
+      const eventSelect = document.getElementById("setlist-event-select");
+      if (!eventSelect) return;
+      const selected = eventSelect.value;
+      eventSelect.innerHTML = '<option value="">イベントを選択してください</option>';
+      getRows("events").forEach(row => {
+        const option = document.createElement("option");
+        option.value = row.event_id;
+        option.textContent = `${row.event_id}: ${referenceLabel(row, referenceConfig.event_id)}`;
+        eventSelect.appendChild(option);
+      });
+      eventSelect.value = selected;
+      updateSelectedEventInfo();
+    }
+
+    function updateSelectedEventInfo() {
+      const eventSelect = document.getElementById("setlist-event-select");
+      const info = document.getElementById("selected-event-info");
+      if (!eventSelect || !info) return;
+      const row = getReferenceRow("event_id", eventSelect.value);
+      if (!loadedDb) {
+        info.textContent = "SQLiteファイルを読み込むとイベントを選択できます。";
+      } else if (!eventSelect.value) {
+        info.textContent = "演目を入力するイベントを選択してください。";
+      } else if (row) {
+        info.innerHTML = `<strong>選択中のイベント</strong>${escapeHtml(referenceLabel(row, referenceConfig.event_id))}`;
+      } else {
+        info.textContent = "選択中のイベントが読み込み済みDB内に見つかりません。";
+      }
+    }
+
+    function updateSongSelectOptions() {
+      document.querySelectorAll('select[data-column="song_id"]').forEach(select => {
+        const selected = select.value;
+        select.innerHTML = '<option value="">未選択</option>';
+        getRows("songs").forEach(row => {
+          const option = document.createElement("option");
+          option.value = row.song_id;
+          option.textContent = `${row.song_id}: ${referenceLabel(row, referenceConfig.song_id)}`;
+          select.appendChild(option);
+        });
+        select.value = selected;
+      });
+    }
+
+    function nextSetlistId() {
+      const existingIds = getRows("setlists")
+        .map(row => Number(row.setlist_id))
+        .filter(Number.isFinite);
+      const editingIds = setlistRows
+        .map(row => Number(row.querySelector('[data-column="setlist_id"]').value))
+        .filter(Number.isFinite);
+      return Math.max(0, ...existingIds, ...editingIds) + 1;
+    }
+
+    function renumberPerformanceIds() {
+      setlistRows.forEach((row, index) => {
+        row.querySelector('[data-column="performance_id"]').value = index + 1;
+      });
+    }
+
+    function moveSetlistRow(row, direction) {
+      const tbody = row.parentElement;
+      const index = setlistRows.indexOf(row);
+      const targetIndex = index + direction;
+      if (targetIndex < 0 || targetIndex >= setlistRows.length) return;
+      const [removed] = setlistRows.splice(index, 1);
+      setlistRows.splice(targetIndex, 0, removed);
+      setlistRows.forEach(currentRow => tbody.appendChild(currentRow));
+      renumberPerformanceIds();
+    }
+
+    function addSetlistRow(defaults = {}) {
+      const tbody = document.getElementById("setlist-grid-body");
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td><input data-column="setlist_id" type="number" value="${escapeHtml(defaults.setlist_id ?? nextSetlistId())}"></td>
+        <td><input data-column="performance_id" type="number" readonly></td>
+        <td><input data-column="performance_type" type="text" value="${escapeHtml(defaults.performance_type ?? "歌唱")}"></td>
+        <td><input data-column="performance_type_short_name" type="text" value="${escapeHtml(defaults.performance_type_short_name ?? "M")}"></td>
+        <td><select data-column="song_id"></select></td>
+        <td><textarea data-column="notes">${escapeHtml(defaults.notes ?? "")}</textarea></td>
+        <td class="inline-actions">
+          <button type="button" class="row-action" data-action="up">↑</button>
+          <button type="button" class="row-action" data-action="down">↓</button>
+          <button type="button" class="danger" data-action="delete">削除</button>
+        </td>`;
+      row.querySelector('[data-action="up"]').addEventListener("click", () => moveSetlistRow(row, -1));
+      row.querySelector('[data-action="down"]').addEventListener("click", () => moveSetlistRow(row, 1));
+      row.querySelector('[data-action="delete"]').addEventListener("click", () => {
+        row.remove();
+        setlistRows.splice(setlistRows.indexOf(row), 1);
+        renumberPerformanceIds();
+      });
+      tbody.appendChild(row);
+      setlistRows.push(row);
+      updateSongSelectOptions();
+      if (defaults.song_id !== undefined) row.querySelector('[data-column="song_id"]').value = defaults.song_id;
+      renumberPerformanceIds();
+    }
+
+    function createReferenceInput(tableName, columnName, type, defaultValue) {
+      const input = document.createElement("input");
+      input.type = type;
+      input.name = `${tableName}.${columnName}`;
+      if (defaultValue !== undefined) input.value = defaultValue;
+
+      if (referenceConfig[columnName]) {
+        input.dataset.referenceColumn = columnName;
+        const box = document.createElement("div");
+        box.className = "reference-box";
+        input.addEventListener("input", () => updateReferenceBox(input, box));
+        referenceBoxes.push({ input, box });
+        return { input, box };
+      }
+
+      return { input, box: null };
+    }
+
+    function createDefaultPanel(tableName, table) {
       const panel = document.createElement("section");
       panel.className = "panel";
       panel.dataset.table = tableName;
@@ -234,22 +725,18 @@
         const wrapper = document.createElement("label");
         wrapper.textContent = label;
 
-        const input = type === "textarea"
-          ? document.createElement("textarea")
-          : document.createElement("input");
+        const { input, box } = type === "textarea"
+          ? { input: document.createElement("textarea"), box: null }
+          : createReferenceInput(tableName, columnName, type, defaultValue);
 
-        if (type !== "textarea") {
-          input.type = type;
-        }
-
-        input.name = `${tableName}.${columnName}`;
-
-        if (defaultValue !== undefined) {
-          input.value = defaultValue;
+        if (type === "textarea") {
+          input.name = `${tableName}.${columnName}`;
+          if (defaultValue !== undefined) input.value = defaultValue;
         }
 
         wrapper.appendChild(input);
         panel.appendChild(wrapper);
+        if (box) panel.appendChild(box);
       });
 
       const actions = document.createElement("div");
@@ -262,6 +749,56 @@
 
       actions.appendChild(generateButton);
       panel.appendChild(actions);
+      return panel;
+    }
+
+    function createSetlistPanel() {
+      const panel = document.createElement("section");
+      panel.className = "panel";
+      panel.dataset.table = "setlists";
+      panel.innerHTML = `
+        <h2>セットリスト</h2>
+        <p class="muted">演目は一つのイベントに属するため、既存イベントを選択してから表形式で入力します。セットリストIDは全イベントで通し番号、演目IDはこの表の並び順で自動採番します。</p>
+        <label>
+          イベント
+          <select id="setlist-event-select"></select>
+        </label>
+        <div id="selected-event-info" class="reference-box"></div>
+        <div class="actions">
+          <button type="button" class="secondary" id="add-setlist-row">演目行を追加</button>
+          <button type="button" class="generate" id="generate-setlist-sql">セットリストINSERT文を生成</button>
+        </div>
+        <div class="grid-wrap">
+          <table aria-label="セットリスト入力表">
+            <thead>
+              <tr>
+                <th>セットリストID</th>
+                <th>演目ID</th>
+                <th>演目種別</th>
+                <th>演目種別略称</th>
+                <th>曲</th>
+                <th>備考</th>
+                <th>並び替え</th>
+              </tr>
+            </thead>
+            <tbody id="setlist-grid-body"></tbody>
+          </table>
+        </div>`;
+
+      panel.querySelector("#setlist-event-select").addEventListener("change", updateSelectedEventInfo);
+      panel.querySelector("#add-setlist-row").addEventListener("click", () => addSetlistRow());
+      panel.querySelector("#generate-setlist-sql").addEventListener("click", generateSetlistInsert);
+      return panel;
+    }
+
+    Object.entries(tables).forEach(([tableName, table], index) => {
+      const tab = document.createElement("button");
+      tab.textContent = table.label;
+      tab.dataset.table = tableName;
+      tab.addEventListener("click", () => activate(tableName));
+      tabs.appendChild(tab);
+
+      const panel = tableName === "setlists" ? createSetlistPanel() : createDefaultPanel(tableName, table);
       panels.appendChild(panel);
 
       if (index === 0) {
@@ -269,6 +806,15 @@
         panel.classList.add("active");
       }
     });
+
+    sqliteFile.addEventListener("change", event => {
+      const [file] = event.target.files;
+      if (file) loadSqliteFile(file);
+    });
+
+    buildDatalists();
+    updateAllReferenceBoxes();
+    addSetlistRow();
   </script>
 </body>
 </html>
