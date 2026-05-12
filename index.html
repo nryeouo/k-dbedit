@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>イベントDB管理</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 24px;
+      line-height: 1.6;
+      background: #f7f7f7;
+    }
+
+    h1 {
+      margin-bottom: 16px;
+    }
+
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .tabs button {
+      padding: 8px 12px;
+      border: 1px solid #aaa;
+      background: white;
+      cursor: pointer;
+      border-radius: 6px;
+    }
+
+    .tabs button.active {
+      background: #222;
+      color: white;
+    }
+
+    .panel {
+      display: none;
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+
+    .panel.active {
+      display: block;
+    }
+
+    label {
+      display: block;
+      margin-top: 12px;
+      font-weight: 600;
+    }
+
+    input,
+    textarea {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px;
+      margin-top: 4px;
+      border: 1px solid #bbb;
+      border-radius: 4px;
+      font: inherit;
+    }
+
+    textarea {
+      min-height: 80px;
+    }
+
+    .actions {
+      margin-top: 16px;
+    }
+
+    button.generate {
+      padding: 10px 16px;
+      border: none;
+      border-radius: 6px;
+      background: #0069d9;
+      color: white;
+      cursor: pointer;
+    }
+
+    pre {
+      background: #1e1e1e;
+      color: #e8e8e8;
+      padding: 16px;
+      border-radius: 8px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <h1>イベントDB管理</h1>
+
+  <div class="tabs" id="tabs"></div>
+  <div id="panels"></div>
+
+  <h2>生成SQL</h2>
+  <pre id="output">ここにINSERT文が表示されます。</pre>
+
+  <script>
+    const tables = {
+      events: {
+        label: "イベント",
+        columns: [
+          ["event_id", "イベントID", "number"],
+          ["event_name", "イベント名", "text"],
+          ["event_short_name", "イベント略称", "text"],
+          ["venue_id", "会場ID", "number"],
+          ["doors_open_at", "開場日時 ISO8601", "text"],
+          ["starts_at", "開会日時 ISO8601", "text"],
+          ["ends_at", "閉会日時 ISO8601", "text"],
+          ["participant_count", "参加者数", "number"],
+          ["setlist_id", "セットリストID", "number"],
+          ["notes", "備考", "textarea"]
+        ]
+      },
+      venues: {
+        label: "会場",
+        columns: [
+          ["venue_id", "会場ID", "number"],
+          ["venue_name", "会場名", "text"],
+          ["venue_short_name", "会場略称", "text"],
+          ["official_website", "会場公式Webサイト", "text"],
+          ["address", "住所", "text"],
+          ["latitude", "緯度", "number"],
+          ["longitude", "経度", "number"]
+        ]
+      },
+      setlists: {
+        label: "セットリスト",
+        columns: [
+          ["setlist_id", "セットリストID", "number"],
+          ["event_id", "イベントID", "number"],
+          ["performance_id", "演目ID", "number"],
+          ["performance_type", "演目種別", "text", "歌唱"],
+          ["performance_type_short_name", "演目種別略称", "text", "M"],
+          ["song_id", "曲ID", "text"],
+          ["notes", "備考", "textarea"]
+        ]
+      },
+      songs: {
+        label: "楽曲",
+        columns: [
+          ["song_id", "曲ID", "text"],
+          ["song_name", "曲名", "text"],
+          ["duration_seconds", "曲の秒数", "number"],
+          ["lyricist_artist_ids", "作詞者のアーティストID配列 JSON", "text", "[]"],
+          ["composer_artist_ids", "作曲者のアーティストID配列 JSON", "text", "[]"],
+          ["musical_key", "調性", "text"],
+          ["first_lyrics", "歌い出し歌詞", "textarea"],
+          ["full_lyrics", "全体歌詞", "textarea"],
+          ["genre_id", "ジャンルID", "number"],
+          ["notes", "備考", "textarea"]
+        ]
+      },
+      genres: {
+        label: "ジャンル",
+        columns: [
+          ["genre_id", "ジャンルID", "number"],
+          ["genre_name", "ジャンル名", "text"],
+          ["genre_color", "ジャンル色", "text"]
+        ]
+      },
+      artists: {
+        label: "アーティスト",
+        columns: [
+          ["artist_id", "アーティストID", "number"],
+          ["artist_name", "アーティスト名", "text"]
+        ]
+      }
+    };
+
+    const tabs = document.getElementById("tabs");
+    const panels = document.getElementById("panels");
+    const output = document.getElementById("output");
+
+    function sqlValue(value, type) {
+      if (value === "") return "NULL";
+
+      if (type === "number") {
+        return Number(value);
+      }
+
+      return "'" + String(value).replaceAll("'", "''") + "'";
+    }
+
+    function generateInsert(tableName) {
+      const table = tables[tableName];
+      const columns = [];
+      const values = [];
+
+      table.columns.forEach(([columnName, , type]) => {
+        const input = document.querySelector(`[name="${tableName}.${columnName}"]`);
+        columns.push(columnName);
+        values.push(sqlValue(input.value, type));
+      });
+
+      output.textContent =
+        `INSERT INTO ${tableName} (${columns.join(", ")})\n` +
+        `VALUES (${values.join(", ")});`;
+    }
+
+    function activate(tableName) {
+      document.querySelectorAll(".tabs button").forEach(button => {
+        button.classList.toggle("active", button.dataset.table === tableName);
+      });
+
+      document.querySelectorAll(".panel").forEach(panel => {
+        panel.classList.toggle("active", panel.dataset.table === tableName);
+      });
+    }
+
+    Object.entries(tables).forEach(([tableName, table], index) => {
+      const tab = document.createElement("button");
+      tab.textContent = table.label;
+      tab.dataset.table = tableName;
+      tab.addEventListener("click", () => activate(tableName));
+      tabs.appendChild(tab);
+
+      const panel = document.createElement("section");
+      panel.className = "panel";
+      panel.dataset.table = tableName;
+
+      const title = document.createElement("h2");
+      title.textContent = table.label;
+      panel.appendChild(title);
+
+      table.columns.forEach(([columnName, label, type, defaultValue]) => {
+        const wrapper = document.createElement("label");
+        wrapper.textContent = label;
+
+        const input = type === "textarea"
+          ? document.createElement("textarea")
+          : document.createElement("input");
+
+        if (type !== "textarea") {
+          input.type = type;
+        }
+
+        input.name = `${tableName}.${columnName}`;
+
+        if (defaultValue !== undefined) {
+          input.value = defaultValue;
+        }
+
+        wrapper.appendChild(input);
+        panel.appendChild(wrapper);
+      });
+
+      const actions = document.createElement("div");
+      actions.className = "actions";
+
+      const generateButton = document.createElement("button");
+      generateButton.className = "generate";
+      generateButton.textContent = "INSERT文を生成";
+      generateButton.addEventListener("click", () => generateInsert(tableName));
+
+      actions.appendChild(generateButton);
+      panel.appendChild(actions);
+      panels.appendChild(panel);
+
+      if (index === 0) {
+        tab.classList.add("active");
+        panel.classList.add("active");
+      }
+    });
+  </script>
+</body>
+</html>
