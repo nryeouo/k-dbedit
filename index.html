@@ -241,6 +241,10 @@
   <div id="panels"></div>
 
   <h2>生成SQL</h2>
+  <p class="muted">DBへ書き込んだ後は、変更済みSQLiteファイルをダウンロードして保存できます。</p>
+  <div class="actions">
+    <button type="button" class="secondary" id="download-db">変更済みSQLiteをダウンロード</button>
+  </div>
   <pre id="output">ここにINSERT文が表示されます。</pre>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
@@ -253,11 +257,10 @@
           ["event_name", "イベント名", "text"],
           ["event_short_name", "イベント略称", "text"],
           ["venue_id", "会場ID", "number"],
-          ["doors_open_at", "開場日時 ISO8601", "text"],
-          ["starts_at", "開会日時 ISO8601", "text"],
-          ["ends_at", "閉会日時 ISO8601", "text"],
+          ["doors_open_at", "開場日時", "datetime-local"],
+          ["starts_at", "開会日時", "datetime-local"],
+          ["ends_at", "閉会日時", "datetime-local"],
           ["participant_count", "参加者数", "number"],
-          ["setlist_id", "セットリストID", "number"],
           ["notes", "備考", "textarea"]
         ]
       },
@@ -353,6 +356,7 @@
     const tableList = document.getElementById("table-list");
     const previewTitle = document.getElementById("preview-title");
     const tablePreview = document.getElementById("table-preview");
+    const downloadDbButton = document.getElementById("download-db");
 
     let SQL;
     let loadedDb;
@@ -382,6 +386,11 @@
       return "'" + String(value).replaceAll("'", "''") + "'";
     }
 
+    function showStatus(message, isError = false) {
+      dbStatus.classList.toggle("error", isError);
+      dbStatus.textContent = message;
+    }
+
     function describeRow(row, columns) {
       return columns
         .filter(column => row[column] !== undefined && row[column] !== null && row[column] !== "")
@@ -406,7 +415,7 @@
       return getRows(config.table).find(row => String(row[config.id]) === String(value)) ?? null;
     }
 
-    function generateInsert(tableName) {
+    function buildInsertSql(tableName) {
       const table = tables[tableName];
       const columns = [];
       const values = [];
@@ -417,18 +426,20 @@
         values.push(sqlValue(input.value, type));
       });
 
-      output.textContent =
-        `INSERT INTO ${tableName} (${columns.join(", ")})\n` +
+      return `INSERT INTO ${tableName} (${columns.join(", ")})\n` +
         `VALUES (${values.join(", ")});`;
     }
 
-    function generateSetlistInsert() {
+    function generateInsert(tableName) {
+      output.textContent = buildInsertSql(tableName);
+    }
+
+    function buildSetlistInsertSql() {
       const eventSelect = document.getElementById("setlist-event-select");
       const eventId = eventSelect.value;
 
       if (!eventId) {
-        output.textContent = "-- 先にイベントを選択してください。";
-        return;
+        return "-- 先にイベントを選択してください。";
       }
 
       const columns = tables.setlists.columns.map(([columnName]) => columnName);
@@ -449,13 +460,15 @@
       });
 
       if (statements.length === 0) {
-        output.textContent = "-- 演目行を追加してください。";
-        return;
+        return "-- 演目行を追加してください。";
       }
 
-      output.textContent =
-        `INSERT INTO setlists (${columns.join(", ")})\nVALUES\n` +
+      return `INSERT INTO setlists (${columns.join(", ")})\nVALUES\n` +
         `${statements.join(",\n")};`;
+    }
+
+    function generateSetlistInsert() {
+      output.textContent = buildSetlistInsertSql();
     }
 
     function activate(tableName) {
@@ -567,8 +580,7 @@
 
     async function loadSqliteFile(file) {
       try {
-        dbStatus.classList.remove("error");
-        dbStatus.textContent = "SQLiteエンジンとファイルを読み込み中です...";
+        showStatus("SQLiteエンジンとファイルを読み込み中です...");
         if (!SQL) {
           SQL = await initSqlJs({
             locateFile: fileName => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${fileName}`
@@ -581,14 +593,13 @@
         buildDatalists();
         updateAllReferenceBoxes();
         dbBrowser.hidden = false;
-        dbStatus.textContent = `${file.name} を読み込みました。${tableNames.length}個のテーブルを参照できます。`;
+        showStatus(`${file.name} を読み込みました。${tableNames.length}個のテーブルを参照できます。`);
       } catch (error) {
         loadedDb = null;
         dbRows = {};
         dbColumns = {};
         dbBrowser.hidden = true;
-        dbStatus.classList.add("error");
-        dbStatus.textContent = `読み込みに失敗しました: ${error.message}`;
+        showStatus(`読み込みに失敗しました: ${error.message}`, true);
         updateAllReferenceBoxes();
       }
     }
@@ -663,6 +674,60 @@
       setlistRows.splice(targetIndex, 0, removed);
       setlistRows.forEach(currentRow => tbody.appendChild(currentRow));
       renumberPerformanceIds();
+    }
+
+    function refreshAfterDbWrite(message) {
+      const tableNames = loadTableRows(loadedDb);
+      renderTableList(tableNames);
+      buildDatalists();
+      updateAllReferenceBoxes();
+      showStatus(message);
+    }
+
+    function executeSql(sql, successMessage) {
+      if (!loadedDb) {
+        showStatus("先にSQLiteファイルを読み込んでください。", true);
+        return false;
+      }
+
+      if (sql.trim().startsWith("--")) {
+        output.textContent = sql;
+        showStatus(sql.replace(/^--\s*/, ""), true);
+        return false;
+      }
+
+      try {
+        loadedDb.run(sql);
+        output.textContent = sql;
+        refreshAfterDbWrite(successMessage);
+        return true;
+      } catch (error) {
+        showStatus(`DBへの書き込みに失敗しました: ${error.message}`, true);
+        return false;
+      }
+    }
+
+    function insertRow(tableName) {
+      executeSql(buildInsertSql(tableName), `${tables[tableName].label}をDBへ書き込みました。`);
+    }
+
+    function insertSetlistRows() {
+      executeSql(buildSetlistInsertSql(), "セットリストをDBへ書き込みました。");
+    }
+
+    function downloadDb() {
+      if (!loadedDb) {
+        showStatus("先にSQLiteファイルを読み込んでください。", true);
+        return;
+      }
+
+      const blob = new Blob([loadedDb.export()], { type: "application/vnd.sqlite3" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "updated.sqlite";
+      link.click();
+      URL.revokeObjectURL(url);
     }
 
     function addSetlistRow(defaults = {}) {
@@ -743,11 +808,17 @@
       actions.className = "actions";
 
       const generateButton = document.createElement("button");
-      generateButton.className = "generate";
+      generateButton.className = "secondary";
       generateButton.textContent = "INSERT文を生成";
       generateButton.addEventListener("click", () => generateInsert(tableName));
 
+      const insertButton = document.createElement("button");
+      insertButton.className = "generate";
+      insertButton.textContent = "DBへ書き込む";
+      insertButton.addEventListener("click", () => insertRow(tableName));
+
       actions.appendChild(generateButton);
+      actions.appendChild(insertButton);
       panel.appendChild(actions);
       return panel;
     }
@@ -766,7 +837,8 @@
         <div id="selected-event-info" class="reference-box"></div>
         <div class="actions">
           <button type="button" class="secondary" id="add-setlist-row">演目行を追加</button>
-          <button type="button" class="generate" id="generate-setlist-sql">セットリストINSERT文を生成</button>
+          <button type="button" class="secondary" id="generate-setlist-sql">セットリストINSERT文を生成</button>
+          <button type="button" class="generate" id="insert-setlist-rows">DBへ書き込む</button>
         </div>
         <div class="grid-wrap">
           <table aria-label="セットリスト入力表">
@@ -788,6 +860,7 @@
       panel.querySelector("#setlist-event-select").addEventListener("change", updateSelectedEventInfo);
       panel.querySelector("#add-setlist-row").addEventListener("click", () => addSetlistRow());
       panel.querySelector("#generate-setlist-sql").addEventListener("click", generateSetlistInsert);
+      panel.querySelector("#insert-setlist-rows").addEventListener("click", insertSetlistRows);
       return panel;
     }
 
@@ -806,6 +879,8 @@
         panel.classList.add("active");
       }
     });
+
+    downloadDbButton.addEventListener("click", downloadDb);
 
     sqliteFile.addEventListener("change", event => {
       const [file] = event.target.files;
