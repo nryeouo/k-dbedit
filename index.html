@@ -284,8 +284,8 @@
           ["performance_id", "演目ID", "number"],
           ["performance_type", "演目種別", "text", "歌唱"],
           ["performance_type_short_name", "演目種別略称", "text", "M"],
-          ["song_id", "曲ID", "text"],
-          ["notes", "備考", "textarea"]
+          ["song_id", "曲ID", "number"],
+          ["notes", "備考", "text"]
         ]
       },
       songs: {
@@ -531,7 +531,7 @@
     function updateAllReferenceBoxes() {
       referenceBoxes.forEach(({ input, box }) => updateReferenceBox(input, box));
       updateEventSelectOptions();
-      updateSongSelectOptions();
+      updateSongInputOptions();
     }
 
     function loadTableRows(db) {
@@ -635,17 +635,9 @@
       }
     }
 
-    function updateSongSelectOptions() {
-      document.querySelectorAll('select[data-column="song_id"]').forEach(select => {
-        const selected = select.value;
-        select.innerHTML = '<option value="">未選択</option>';
-        getRows("songs").forEach(row => {
-          const option = document.createElement("option");
-          option.value = row.song_id;
-          option.textContent = `${row.song_id}: ${referenceLabel(row, referenceConfig.song_id)}`;
-          select.appendChild(option);
-        });
-        select.value = selected;
+    function updateSongInputOptions() {
+      document.querySelectorAll('input[data-column="song_id"][data-reference-column]').forEach(input => {
+        input.setAttribute("list", datalistIds.get("song_id") ?? "");
       });
     }
 
@@ -738,8 +730,8 @@
         <td><input data-column="performance_id" type="number" readonly></td>
         <td><input data-column="performance_type" type="text" value="${escapeHtml(defaults.performance_type ?? "歌唱")}"></td>
         <td><input data-column="performance_type_short_name" type="text" value="${escapeHtml(defaults.performance_type_short_name ?? "M")}"></td>
-        <td><select data-column="song_id"></select></td>
-        <td><textarea data-column="notes">${escapeHtml(defaults.notes ?? "")}</textarea></td>
+        <td><input data-column="song_id" data-reference-column="song_id" type="number" inputmode="numeric"></td>
+        <td><input data-column="notes" type="text" value="${escapeHtml(defaults.notes ?? "")}"></td>
         <td class="inline-actions">
           <button type="button" class="row-action" data-action="up">↑</button>
           <button type="button" class="row-action" data-action="down">↓</button>
@@ -754,7 +746,7 @@
       });
       tbody.appendChild(row);
       setlistRows.push(row);
-      updateSongSelectOptions();
+      updateSongInputOptions();
       if (defaults.song_id !== undefined) row.querySelector('[data-column="song_id"]').value = defaults.song_id;
       renumberPerformanceIds();
     }
